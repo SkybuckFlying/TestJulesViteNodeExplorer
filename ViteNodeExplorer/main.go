@@ -12,11 +12,13 @@ import (
 	"github.com/vitelabs/go-vite/v2/crypto/ed25519"
 	"github.com/vitelabs/go-vite/v2/net/discovery"
 	"github.com/vitelabs/go-vite/v2/net/vnode"
+	"github.com/vitelabs/go-vite/v2/rpc"
 )
 
 const (
 	discoveryTimeout = 2 * time.Minute
 	listenPort       = 8485 // An unused port for our explorer client
+	rpcPort          = 48132
 )
 
 type BootnodesResponse struct {
@@ -98,11 +100,15 @@ func main() {
 				}
 
 				status := "Offline"
+				rpcStatus := "[RPC Disabled]"
 				if isNodeOnline(n) {
 					status = "Online"
+					if isRpcEnabled(n) {
+						rpcStatus = "[RPC Enabled]"
+					}
 				}
 
-				fmt.Printf("- Node: %s %s [%s]\n", addr, tag, status)
+				fmt.Printf("- Node: %s %s [%s] %s\n", addr, tag, status, rpcStatus)
 				processedNodes[addr] = true
 			}
 		case <-timeout:
@@ -155,4 +161,21 @@ func isNodeOnline(node *vnode.Node) bool {
 	}
 	defer conn.Close()
 	return true
+}
+
+func isRpcEnabled(node *vnode.Node) bool {
+	host := string(node.EndPoint.Host)
+	rpcUrl := fmt.Sprintf("http://%s:%d", host, rpcPort)
+
+	// Use a timeout for the RPC dial
+	client, err := rpc.DialHTTPWithClient(rpcUrl, &http.Client{Timeout: 2 * time.Second})
+	if err != nil {
+		return false
+	}
+	defer client.Close()
+
+	// A simple check to see if the connection is alive
+	var result string
+	err = client.Call(&result, "net_version")
+	return err == nil
 }
