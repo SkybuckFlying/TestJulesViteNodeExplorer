@@ -113,6 +113,7 @@ func main() {
 			}
 		case <-timeout:
 			fmt.Println("\nDiscovery finished.")
+			fmt.Println("\nNote: The discovery protocol is designed to not list its own node. If your node is running correctly but does not appear with the (self) tag, this is expected behavior.")
 			return
 		}
 	}
