@@ -5,17 +5,16 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/vitelabs/go-vite/v2/crypto/ed25519"
 	"github.com/vitelabs/go-vite/v2/net/discovery"
 	"github.com/vitelabs/go-vite/v2/net/vnode"
-	"github.com/vitelabs/go-vite/v2/rpc"
 )
 
 const (
-	rpcPort          = 48132
 	discoveryTimeout = 2 * time.Minute
 	listenPort       = 8485 // An unused port for our explorer client
 )
@@ -27,15 +26,20 @@ type BootnodesResponse struct {
 func main() {
 	fmt.Println("Vite Node Explorer")
 
+	// 0. Get our own public IP
+	publicIP, err := getPublicIP()
+	if err != nil {
+		log.Printf("Could not determine public IP: %v. (self) tag will not be available.", err)
+	} else {
+		fmt.Printf("My public IP is: %s\n", publicIP)
+	}
+
 	// 1. Fetch bootnodes from the URL
 	bootnodes, err := fetchBootnodes("https://bootnodes.vite.net/bootmainnet.json")
 	if err != nil {
 		log.Fatalf("Failed to fetch bootnodes: %v", err)
 	}
 	fmt.Printf("Fetched %d bootnodes\n", len(bootnodes))
-	for _, bootnode := range bootnodes {
-		fmt.Printf("- %s\n", bootnode)
-	}
 
 	// 2. Create a local node with a complete endpoint
 	listenAddr := fmt.Sprintf("0.0.0.0:%d", listenPort)
@@ -62,47 +66,64 @@ func main() {
 	}
 	defer d.Stop()
 
-	fmt.Printf("Discovery started. Searching for RPC nodes for %v...\n", discoveryTimeout)
+	fmt.Printf("Discovery started. Searching for nodes for %v...\n", discoveryTimeout)
 
-	// 4. Periodically check for nodes and collect RPC-enabled ones
+	// 4. Periodically check for nodes and report their status
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	timeout := time.After(discoveryTimeout)
 
-	rpcNodes := make(map[string]struct{})
-
-	fmt.Println("Searching for nodes...")
+	processedNodes := make(map[string]bool)
 
 	for {
 		select {
 		case <-ticker.C:
 			nodes := d.Nodes()
-			fmt.Printf("Discovered %d nodes so far. Checking for RPC...\n", len(nodes))
+			fmt.Printf("\n> Discovered %d nodes. Checking status...\n", len(nodes))
 			for _, n := range nodes {
 				host := n.EndPoint.Hostname()
-				port := n.EndPoint.Port
-				fmt.Printf("Found Node: %s:%d\n", host, port)
-				rpcUrl := fmt.Sprintf("http://%s:%d", host, rpcPort)
-				if _, exists := rpcNodes[rpcUrl]; !exists {
-					if isRpcEnabled(n) {
-						fmt.Printf("Found RPC Node: %s\n", rpcUrl)
-						rpcNodes[rpcUrl] = struct{}{}
-					}
+				// Skip invalid or local IPs
+				if host == "" || host == "127.0.0.1" || host == "0.0.0.0" {
+					continue
 				}
+				addr := fmt.Sprintf("%s:%d", host, n.EndPoint.Port)
+
+				if _, processed := processedNodes[addr]; processed {
+					continue
+				}
+
+				tag := ""
+				if host == publicIP {
+					tag = "(self)"
+				}
+
+				status := "Offline"
+				if isNodeOnline(n) {
+					status = "Online"
+				}
+
+				fmt.Printf("- Node: %s %s [%s]\n", addr, tag, status)
+				processedNodes[addr] = true
 			}
 		case <-timeout:
 			fmt.Println("\nDiscovery finished.")
-			if len(rpcNodes) == 0 {
-				fmt.Println("No RPC nodes found.")
-			} else {
-				fmt.Println("Found the following RPC nodes:")
-				for nodeUrl := range rpcNodes {
-					fmt.Println("- ", nodeUrl)
-				}
-			}
 			return
 		}
 	}
+}
+
+func getPublicIP() (string, error) {
+	resp, err := http.Get("https://api.ipify.org")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	ip, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(ip), nil
 }
 
 func fetchBootnodes(url string) ([]string, error) {
@@ -126,23 +147,12 @@ func fetchBootnodes(url string) ([]string, error) {
 	return bootnodesResponse.Data, nil
 }
 
-func isRpcEnabled(node *vnode.Node) bool {
-	host := string(node.EndPoint.Host)
-	// Skip invalid or local IPs
-	if host == "" || host == "127.0.0.1" || host == "0.0.0.0" {
-		return false
-	}
-	rpcUrl := fmt.Sprintf("http://%s:%d", host, rpcPort)
-	
-	// Use a timeout for the RPC dial
-	client, err := rpc.DialHTTPWithClient(rpcUrl, &http.Client{Timeout: 2 * time.Second})
+func isNodeOnline(node *vnode.Node) bool {
+	address := fmt.Sprintf("%s:%d", node.EndPoint.Hostname(), node.EndPoint.Port)
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
 		return false
 	}
-	defer client.Close()
-
-	// A simple check to see if the connection is alive
-	var result string
-	err = client.Call(&result, "net_version")
-	return err == nil
+	defer conn.Close()
+	return true
 }
