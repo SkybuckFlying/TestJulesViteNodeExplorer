@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/eiannone/keyboard"
 	"github.com/vitelabs/go-vite/v2/crypto/ed25519"
 	"github.com/vitelabs/go-vite/v2/net/discovery"
 	"github.com/vitelabs/go-vite/v2/net/vnode"
@@ -17,7 +16,7 @@ import (
 
 const (
 	rpcPort          = 48132
-	discoveryTimeout = 10 * time.Minute
+	discoveryTimeout = 2 * time.Minute
 	listenPort       = 8485 // An unused port for our explorer client
 )
 
@@ -72,17 +71,7 @@ func main() {
 
 	rpcNodes := make(map[string]struct{})
 
-	if err := keyboard.Open(); err != nil {
-		log.Fatalf("Failed to open keyboard: %v", err)
-	}
-	defer keyboard.Close()
-
-	keysEvents, err := keyboard.GetKeys(10)
-	if err != nil {
-		log.Fatalf("Failed to get keys: %v", err)
-	}
-
-	fmt.Println("Press ESC to quit.")
+	fmt.Println("Searching for nodes...")
 
 	for {
 		select {
@@ -112,11 +101,6 @@ func main() {
 				}
 			}
 			return
-		case event := <-keysEvents:
-			if event.Key == keyboard.KeyEsc {
-				fmt.Println("ESC pressed. Exiting.")
-				return
-			}
 		}
 	}
 }
